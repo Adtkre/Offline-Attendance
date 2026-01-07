@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Lecture Attendance</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
+        form { margin-top: 30px; padding: 20px; border: 1px solid #ccc; border-radius: 5px; max-width: 400px; margin: 30px auto; }
+        input[type="text"] { width: 90%; padding: 10px; margin: 8px 0; display: inline-block; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        input[type="submit"] { background-color: #4CAF50; color: white; padding: 14px 20px; margin: 8px 0; border: none; border-radius: 4px; cursor: pointer; width: 90%; font-size: 16px;}
+        input[type="submit"]:hover { background-color: #45a049; }
+        #statusMessage { margin-top: 20px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>Attendance for Lecture: <span id="lectureTitle">{{ lecture_id }}</span></h2>
+    <div id="statusMessage"></div>
+
+    <form id="attendanceForm">
+        Name: <input type="text" id="student_name" required><br>
+        Roll Number: <input type="text" id="roll_number" required><br>
+        <input type="submit" value="Submit Attendance">
+    </form>
+
+    <script>
+    const lecture_id = "{{ lecture_id }}";
+    const statusMessage = document.getElementById("statusMessage");
+
+    // Display the sync status (e.g., "1 pending submission")
+    function updateStatus() {
+        const pending = JSON.parse(localStorage.getItem("pending_attendance") || "[]");
+        if (pending.length > 0) {
+            statusMessage.style.color = 'orange';
+            statusMessage.innerHTML = ` ${pending.length} submissions saved locally. Auto-syncing when online...`;
+        } else if (!navigator.onLine) {
+            statusMessage.style.color = 'red';
+            statusMessage.innerHTML = ` Currently Offline. Submissions will be saved locally.`;
+        } else {
+            statusMessage.style.color = 'green';
+            statusMessage.innerHTML = ` Ready for submission.`;
+        }
+    }
+
+    // Sends a single data submission to the server
+    function sendData(data) {
+        return fetch("/submit", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data)
+        });
+    }
+
+    // UPDATED: Sync pending submissions sequentially and robustly
+    async function syncPending() {
+        let pending = JSON.parse(localStorage.getItem("pending_attendance") || "[]");
+        if (pending.length === 0 || !navigator.onLine) {
+            updateStatus();
+            return;
+        }
+
+        const initialPendingCount = pending.length;
+        
+        
+        for (let i = pending.length - 1; i >= 0; i--) {
+            const data = pending[i];
+            try {
+                
+                const res = await sendData(data);
+                
+                
+                if (res.ok) {
+                    pending.splice(i, 1);
+                } else {
+                  
+                    console.error("Sync failed for one item (Server Error):", data);
+                }
+            } catch (err) {
+                
+                console.error("Sync interrupted due to network error:", err);
+                break; 
+            }
+        }
+        
+        if (pending.length > 0) {
+            localStorage.setItem("pending_attendance", JSON.stringify(pending));
+            const syncedCount = initialPendingCount - pending.length;
+            if (syncedCount > 0) {
+                 alert(`Synced ${syncedCount} previously offline submission(s). ${pending.length} remaining.`);
+            }
+        } else {
+            localStorage.removeItem("pending_attendance");
+            if (initialPendingCount > 0) {
+                alert("All previously offline submissions have been successfully synced! 🎉");
+            }
+        }
+        updateStatus();
+    }
+
+    // Handle form submission
+    document.getElementById("attendanceForm").addEventListener("submit", function(e){
+        e.preventDefault();
+        const student_name = document.getElementById("student_name").value;
+        const roll_number = document.getElementById("roll_number").value;
+        
+        // Preserves the scan/submission time, even if it's saved locally!
+        const timestamp = new Date().toISOString(); 
+        const data = { student_name, roll_number, lecture_id, timestamp };
+
+        sendData(data)
+            .then(res => res.json())
+            .then(resp => {
+                if (resp.status === "success") {
+                    alert("Attendance Submitted Successfully! ");
+                } else {
+                     throw new Error(resp.message || "Submission failed on server.");
+                }
+                document.getElementById("attendanceForm").reset();
+                updateStatus();
+            })
+            .catch(err => {
+                
+                console.error("Submission failed, storing locally:", err);
+                let pending = JSON.parse(localStorage.getItem("pending_attendance") || "[]");
+                pending.push(data);
+                localStorage.setItem("pending_attendance", JSON.stringify(pending));
+                alert("No internet/Server Error. Attendance saved locally. Will sync later. 💾");
+                document.getElementById("attendanceForm").reset();
+                updateStatus();
+            });
+    });
+
+    
+    syncPending();
+    window.addEventListener('online', syncPending);
+    window.addEventListener('offline', updateStatus);
+    </script>
+</body>
+</html>
